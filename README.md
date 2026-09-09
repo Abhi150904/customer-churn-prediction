@@ -53,6 +53,7 @@ Built on the IBM Telco Customer Churn dataset (7,043 customers), this project de
 - **Predictive Engine:** Churn prediction via a tuned scikit-learn Random Forest model.
 - **Explainable AI (XAI):** Global feature importance and per-customer SHAP waterfall plots for deep model transparency.
 - **Executive Dashboard:** An interactive, dark-themed Streamlit application featuring KPI cards, dynamic business insights, and Plotly visualizations.
+- **Cost-Sensitive Campaign Planner:** Adjustable retention assumptions, threshold optimization, expected net value analysis, and ranked outreach exports.
 - **Rule-Based Recommendations:** A transparent, business-friendly recommendation engine that translates risk into action.
 - **Self-Healing Data Layer:** If the processed dataset is missing, the app automatically regenerates it from the raw data and trained model.
 - **Robust Model Governance:** Built-in validation of model metadata (schema, versions, training config) before serving predictions.
@@ -166,12 +167,24 @@ pytest tests/ -v
 
 ## 📊 Dashboard Visuals
 
-> **Placeholder:** High-resolution screenshots of the dashboard tabs (Overview, Customers & Risk, Explainability, Business Insights) go here.
-> *To generate screenshots, run the Streamlit app locally and capture the browser window.*
-
 - **Overview Tab:** Executive KPI summary and risk distribution charts.
 - **Customers & Risk Tab:** Filterable data table of high-risk customers with concrete retention recommendations.
+- **Campaign Planner Tab:** Cost-sensitive threshold tuning with campaign assumptions, expected net value curves, capacity planning, and ranked outreach exports.
 - **Explainability Tab:** Interactive SHAP waterfall plots explaining individual customer risk scores.
+
+### Campaign Planner
+
+Adjust campaign assumptions and compare the recommended threshold against the selected manual threshold.
+
+![Campaign planner assumptions and KPI summary](screenshots/campaign_planner_assumptions.png)
+
+The planner separates all threshold-eligible customers from the capacity-limited outreach plan, making it clear when campaign capacity is flattening the result.
+
+![Campaign planner threshold charts](screenshots/campaign_planner_thresholds.png)
+
+The ranked outreach table prioritizes customers by expected net value and can be exported for campaign execution.
+
+![Ranked outreach list](screenshots/campaign_planner_outreach.png)
 
 ---
 

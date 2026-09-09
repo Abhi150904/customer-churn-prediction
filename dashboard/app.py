@@ -34,6 +34,13 @@ import plotly.express as px
 import streamlit as st
 
 from src import config
+from src.campaign_planner import (
+    CampaignAssumptions,
+    estimate_campaign_impact,
+    find_optimal_threshold,
+    select_campaign_customers,
+    threshold_sweep,
+)
 from src.data_pipeline import generate_dashboard_dataset, load_dashboard_data
 from src.feature_engineering import add_business_features
 from src.model import get_feature_importances, load_model
@@ -265,10 +272,11 @@ st.write("")
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_overview, tab_customers, tab_explain, tab_insights, tab_data = st.tabs(
+tab_overview, tab_customers, tab_campaign, tab_explain, tab_insights, tab_data = st.tabs(
     [
         "\U0001F4C8 Overview",
         "\U0001F465 Customers & Risk",
+        "\U0001F4B0 Campaign Planner",
         "\U0001F9E0 Explainability",
         "\U0001F4A1 Business Insights",
         "\U0001F4C1 Data & Export",
@@ -436,6 +444,167 @@ with tab_customers:
     with st.expander("View full customer profile"):
         profile_cols = [c for c in config.MODEL_FEATURES if c in customer_row.index]
         st.table(customer_row[profile_cols].rename("Value").to_frame())
+
+# ---- Campaign Planner tab --------------------------------------------------
+with tab_campaign:
+    st.markdown('<div class="section-title">Cost-Sensitive Campaign Planner</div>', unsafe_allow_html=True)
+    st.caption(
+        "Tune the outreach threshold against campaign cost, expected save rate, "
+        "and retention value. Calculations use the current sidebar filters."
+    )
+
+    controls, summary = st.columns([0.9, 1.4])
+    with controls:
+        st.subheader("Planning assumptions")
+        retention_months = st.slider("Retained revenue window (months)", 1, 36, 12)
+        save_rate_pct = st.slider("Expected save rate", 0, 100, 25, help="Share of targeted at-risk customers retained by the campaign.")
+        contact_cost = st.number_input("Contact cost per customer ($)", min_value=0.0, value=15.0, step=5.0)
+        incentive_cost = st.number_input("Incentive cost per customer ($)", min_value=0.0, value=50.0, step=5.0)
+        max_customers = st.number_input(
+            "Campaign capacity",
+            min_value=1,
+            max_value=max(1, len(filtered_df)),
+            value=min(500, max(1, len(filtered_df))),
+            step=25,
+        )
+        selected_threshold = st.slider("Manual churn threshold", 0.05, 0.95, 0.60, 0.05)
+
+    assumptions = CampaignAssumptions(
+        retention_months=retention_months,
+        save_rate=save_rate_pct / 100,
+        contact_cost=contact_cost,
+        incentive_cost=incentive_cost,
+    )
+    optimal = find_optimal_threshold(filtered_df, assumptions, max_customers=int(max_customers))
+    manual_impact = estimate_campaign_impact(
+        filtered_df,
+        selected_threshold,
+        assumptions,
+        max_customers=int(max_customers),
+    )
+
+    with summary:
+        st.subheader("Recommended threshold")
+        st.metric("Optimal threshold", f"{optimal['threshold']:.2f}")
+
+        impact_cols = st.columns(4)
+        impact_cols[0].metric("Customers targeted", f"{manual_impact['targeted_customers']:,}")
+        impact_cols[1].metric("Expected revenue saved", f"${manual_impact['expected_revenue_saved']:,.0f}")
+        impact_cols[2].metric("Campaign cost", f"${manual_impact['campaign_cost']:,.0f}")
+        impact_cols[3].metric("Expected net value", f"${manual_impact['expected_net_value']:,.0f}")
+
+        if "historical_precision" in manual_impact:
+            p_cols = st.columns(2)
+            p_cols[0].metric("Historical precision", f"{manual_impact['historical_precision']:.1%}")
+            p_cols[1].metric("Historical recall", f"{manual_impact['historical_recall']:.1%}")
+
+        st.info(
+            f"At the current manual threshold of **{selected_threshold:.2f}**, "
+            f"the planner ranks up to **{int(max_customers):,}** customers by expected net value."
+        )
+
+    threshold_sweep_df = threshold_sweep(filtered_df, assumptions)
+    capacity_sweep_df = threshold_sweep(filtered_df, assumptions, max_customers=int(max_customers))
+    value_sweep_df = pd.concat(
+        [
+            threshold_sweep_df.assign(Scenario="All eligible customers"),
+            capacity_sweep_df.assign(Scenario="After capacity limit"),
+        ],
+        ignore_index=True,
+    )
+    customer_sweep_df = pd.concat(
+        [
+            threshold_sweep_df[["threshold", "targeted_customers"]].assign(Scenario="Eligible at threshold"),
+            capacity_sweep_df[["threshold", "targeted_customers"]].assign(Scenario="Planned outreach"),
+        ],
+        ignore_index=True,
+    )
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        fig = px.line(
+            value_sweep_df,
+            x="threshold",
+            y="expected_net_value",
+            color="Scenario",
+            markers=True,
+            template=PLOTLY_TEMPLATE,
+            color_discrete_map={
+                "All eligible customers": "#6FCF97",
+                "After capacity limit": "#F5B041",
+            },
+        )
+        fig.add_vline(x=optimal["threshold"], line_dash="dash", line_color="#F5B041")
+        fig.add_vline(x=selected_threshold, line_dash="dot", line_color="#F5F6FA")
+        fig.update_layout(
+            title="Expected Net Value by Churn Threshold",
+            xaxis_title="Churn threshold",
+            yaxis_title="Expected net value ($)",
+            height=360,
+            margin=dict(t=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with c2:
+        fig = px.line(
+            customer_sweep_df,
+            x="threshold",
+            y="targeted_customers",
+            color="Scenario",
+            markers=True,
+            template=PLOTLY_TEMPLATE,
+            color_discrete_map={
+                "Eligible at threshold": "#4C6FFF",
+                "Planned outreach": "#6FCF97",
+            },
+        )
+        fig.add_hline(y=int(max_customers), line_dash="dash", line_color="#F5B041")
+        fig.add_vline(x=selected_threshold, line_dash="dot", line_color="#F5F6FA")
+        fig.update_layout(
+            title="Customers Targeted by Threshold",
+            xaxis_title="Churn threshold",
+            yaxis_title="Customers",
+            height=360,
+            margin=dict(t=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown('<div class="section-title">Ranked Outreach List</div>', unsafe_allow_html=True)
+    campaign_df = select_campaign_customers(
+        filtered_df,
+        selected_threshold,
+        assumptions,
+        max_customers=int(max_customers),
+    )
+    campaign_columns = [
+        "Customer ID",
+        "Risk Level",
+        "Churn Probability",
+        "Monthly Charges",
+        "Expected Revenue Saved",
+        "Campaign Cost",
+        "Expected Net Value",
+        "Recommendation",
+    ]
+    st.dataframe(
+        campaign_df[[c for c in campaign_columns if c in campaign_df.columns]],
+        use_container_width=True,
+        height=360,
+        column_config={
+            "Churn Probability": st.column_config.ProgressColumn(
+                "Churn Probability", min_value=0, max_value=1, format="%.2f"
+            ),
+            "Monthly Charges": st.column_config.NumberColumn("Monthly Charges", format="$%.2f"),
+            "Expected Revenue Saved": st.column_config.NumberColumn("Expected Revenue Saved", format="$%.0f"),
+            "Campaign Cost": st.column_config.NumberColumn("Campaign Cost", format="$%.0f"),
+            "Expected Net Value": st.column_config.NumberColumn("Expected Net Value", format="$%.0f"),
+        },
+    )
+    st.download_button(
+        "\U0001F4E5 Download Campaign List (CSV)",
+        data=campaign_df.to_csv(index=False).encode("utf-8"),
+        file_name="retention_campaign_plan.csv",
+        mime="text/csv",
+    )
 
 # ---- Explainability tab ----------------------------------------------------
 with tab_explain:
@@ -670,6 +839,6 @@ with tab_data:
         "- Scored by: `models/customer_churn_model.pkl` (Random Forest, tuned via GridSearchCV)\n"
         "- Risk thresholds and recommendation rules: see `src/risk_engine.py` and "
         "`src/recommendation_engine.py`\n"
-        "- `Customer ID` is a synthetic display identifier generated by the dashboard — "
-        "the original `CustomerID` field was dropped upstream as a non-predictive identifier."
+        "- `Customer ID` is restored from the original `CustomerID` field when row alignment "
+        "can be verified; otherwise the dashboard falls back to a generated display ID."
     )
