@@ -226,7 +226,10 @@ def load_dashboard_data(model=None) -> pd.DataFrame:
     """
     if config.DASHBOARD_DATA_PATH.exists():
         logger.info("Loading existing dashboard dataset from %s", config.DASHBOARD_DATA_PATH)
-        return restore_customer_ids(pd.read_csv(config.DASHBOARD_DATA_PATH))
+        dashboard_df = restore_customer_ids(pd.read_csv(config.DASHBOARD_DATA_PATH))
+        from src.recommendation_engine import apply_recommendations
+
+        return apply_recommendations(dashboard_df)
 
     logger.warning(
         "Dashboard dataset not found at %s — attempting to regenerate it.",
